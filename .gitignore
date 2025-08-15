@@ -8,3 +8,6 @@ __pycache__/
 venv/
 .idea/
 
+videobuff_git
+videobuff_git.pub
+*.DS_Store
