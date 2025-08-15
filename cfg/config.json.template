@@ -1,0 +1,29 @@
+{
+        "mysql":{
+            "host":"localhost",
+            "user":"sysop",
+            "passwd":"Snltmnn_2020r",
+            "db":"dxcluster"
+        },
+        "timer":{
+                        "interval":30000
+        },
+	"mycallsign":"PA0ESH",
+    "mail":"info@pa0esh.nl",
+    "enable_cq_filter":"n",
+    "telnet": {
+        "host": "dxcluster.pa0esh.nl",
+        "port": "7300",
+        "user": "pa0esh",
+        "password": ""
+    },
+        "menu": {
+          "menu_list": [
+            {"label":"Charts & stats", "link": "/plots.html", "external": false},
+            {"label": "Propagation", "link": "/propagation.html", "external": false},              
+            {"label":"Sources", "link": "https://github.com/coulisse/spiderweb/" , "external": true},    
+            {"label":"Cookies", "link": "/cookies.html", "external": false},
+            {"label":"Privacy", "link": "/privacy.html", "external": false}
+            ]
+        }
+}

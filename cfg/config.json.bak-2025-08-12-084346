@@ -1,0 +1,65 @@
+{
+  "mysql": {
+    "host": "127.0.0.1",
+    "user": "sysop",
+    "password": "Snltmnn_2020",
+    "passwd": "Snltmnn_2020",
+    "db": "dxcluster",
+    "database": "dxcluster",
+    "port": 3306
+  },
+  "db_host": "127.0.0.1",
+  "db_name": "dxcluster",
+  "db_user": "sysop",
+  "db_pass": "Snltmnn_2020",
+  "db_port": 3306,
+  "timer": {
+    "interval": 30000
+  },
+  "mycallsign": "PA0ESH",
+  "mail": "info@pa0esh.nl",
+  "enable_cq_filter": "n",
+  "telnet": {
+    "host": "dxcluster.pa0esh.nl",
+    "port": {
+      "__jq": 0
+    },
+    "user": "pa0esh",
+    "password": "",
+    "telnet_host": "dxcluster.pa0esh.nl",
+    "telnet_port": {
+      "__jq": 0
+    },
+    "telnet_user": "pa0esh",
+    "telnet_password": ""
+  },
+  "menu": {
+    "menu_list": [
+      {
+        "label": "Charts & stats",
+        "link": "/plots.html",
+        "external": false
+      },
+      {
+        "label": "Propagation",
+        "link": "/propagation.html",
+        "external": false
+      },
+      {
+        "label": "Sources",
+        "link": "https://github.com/coulisse/spiderweb/",
+        "external": true
+      },
+      {
+        "label": "Cookies",
+        "link": "/cookies.html",
+        "external": false
+      },
+      {
+        "label": "Privacy",
+        "link": "/privacy.html",
+        "external": false
+      }
+    ]
+  }
+}

@@ -1,0 +1,104 @@
+{% extends "_base.html" %}
+
+{% block title %}
+<title>Spiderweb — Backups</title>
+{% endblock %}
+
+{% block head %}
+{{ super() }}
+<style>
+  /* Forceer witte tekst voor de headerbox op deze pagina */
+  .ipcs p, .ipcs code, .ipcs .text-light { color: #fff !important; }
+</style>
+{% endblock %}
+
+{% block titles %}
+<h2 class="text-white mb-1">Backups</h2>
+<p class="text-white m-0">Directory: <code>{{ backup_dir }}</code></p>
+{% if latest_backup %}
+<p class="text-white m-0">
+  Laatste: <strong>{{ latest_backup.name }}</strong> ({{ latest_backup.mtime_str }})
+</p>
+{% endif %}
+{% endblock %}
+
+{% block contents %}
+<div class="container-fluid px-3 py-3">
+
+  <!-- Run backup knop -->
+  <form method="post" action="{{ url_for('backup_run') }}" class="mb-3">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="btn btn-success">
+      Run backup
+    </button>
+    <small class="text-muted ms-2">maakt .tar.gz &amp; .sql(.gz) in {{ backup_dir }}</small>
+  </form>
+
+  {% if backups %}
+  <div class="table-responsive">
+    <table class="table table-sm table-striped align-middle">
+      <thead class="table-dark">
+        <tr>
+          <th scope="col">Bestand</th>
+          <th scope="col" class="text-end">Grootte</th>
+          <th scope="col">Datum (UTC)</th>
+          <th scope="col" style="width: 340px;">Acties</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for b in backups %}
+        <tr>
+          <td><code>{{ b.name }}</code></td>
+          <td class="text-end">{{ b.size_kb }}&nbsp;KB</td>
+          <td>{{ b.mtime_str }}</td>
+          <td>
+            <!-- Download -->
+            <a class="btn btn-sm btn-primary me-1"
+               href="{{ url_for('backup_download', name=b.name) }}"
+               title="Download">
+              Download
+            </a>
+
+            <!-- Restore DB: accepteer .sql én .sql.gz -->
+            {% if b.name.endswith('.sql') or b.name.endswith('.sql.gz') %}
+            <form method="post" action="{{ url_for('backup_restore_db') }}" class="d-inline me-1">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="name" value="{{ b.name }}">
+              <button type="submit" class="btn btn-sm btn-warning" title="Herstel database (.sql/.sql.gz)">
+                Restore DB
+              </button>
+            </form>
+            {% endif %}
+
+            <!-- Restore App: .tar.gz met juiste prefix -->
+            {% if b.name.endswith('.tar.gz') and b.name.startswith('backup_spiderweb-') %}
+            <form method="post" action="{{ url_for('backup_restore_app') }}" class="d-inline me-1">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="name" value="{{ b.name }}">
+              <button type="submit" class="btn btn-sm btn-warning" title="Herstel applicatie (.tar.gz)">
+                Restore App
+              </button>
+            </form>
+            {% endif %}
+
+            <!-- Delete -->
+            <form method="post" action="{{ url_for('backup_delete') }}" class="d-inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="name" value="{{ b.name }}">
+              <button type="submit" class="btn btn-sm btn-outline-danger" title="Verwijder backup">
+                Delete
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+    <div class="alert alert-info mb-0">
+      Geen backups gevonden in <code>{{ backup_dir }}</code>.
+    </div>
+  {% endif %}
+</div>
+{% endblock %}
