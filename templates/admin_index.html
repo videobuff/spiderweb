@@ -1,0 +1,49 @@
+{% extends "_base.html" %} {% block title %}<title>Admin</title>{% endblock title %} {% block contents %}
+<div class="container my-4">
+  <h2 class="mb-3">Admin</h2>
+
+  <div class="row g-3">
+    <div class="col-md-6">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h5 class="card-title mb-2">Registraties</h5>
+          <p class="text-muted mb-3">Aanmeldingen bekijken, goedkeuren of afwijzen.</p>
+          <a class="btn btn-primary" href="/admin/registrations">Open registraties</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-6">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h5 class="card-title mb-2">Back-ups</h5>
+          <p class="text-muted mb-3">Overzicht & herstel via de backup-pagina.</p>
+          <a class="btn btn-secondary me-2" href="/backup.html">Open backup-pagina</a>
+
+          <!-- 'Backup nu' direct vanaf admin; CSRF meegeven -->
+          <form class="d-inline" method="post" action="/backup/run">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+            <button
+              class="btn btn-outline-primary"
+              onclick="return confirm('Backup nu starten? Dit kan enkele minuten duren.');">
+              Backup nu
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- Ruimte voor toekomstige admin-tools -->
+
+    <div class="col-md-6">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h5>Test Mail</h5>
+          <a href="{{ url_for('admin_testmail') }}" class="btn btn-primary"> Verstuur testmail </a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock contents %}

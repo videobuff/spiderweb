@@ -1,0 +1,84 @@
+{% extends "_base.html" %}
+{% block contents %}
+<div class="container mt-4">
+  <h2 class="mb-3">Registraties beheren</h2>
+
+  {% if dxspider_registered %}
+  <div class="alert alert-info mb-3">
+    <strong>🔗 DXSpider geregistreerde calls:</strong> 
+    <span class="badge bg-primary ms-2">{{ dxspider_registered|length }}</span>
+    <div class="mt-2">
+      {% for call in dxspider_registered %}
+        <span class="badge bg-secondary me-1">{{ call }}</span>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="alert alert-{{ category }} alert-dismissible fade show">
+          {{ message }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
+  <table class="table table-striped">
+    <thead>
+      <tr>
+        <th>Callsign</th>
+        <th>Naam</th>
+        <th>Email</th>
+        <th>QTH</th>
+        <th>Locator</th>
+        <th>Status</th>
+        <th>Datum</th>
+        <th>Acties</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in regs %}
+      <tr>
+        <td><strong>{{ r.callsign }}</strong></td>
+        <td>{{ r.firstname }}</td>
+        <td>{{ r.email }}</td>
+        <td>{{ r.qth }}</td>
+        <td>{{ r.locator }}</td>
+        <td>
+          {% if r.status == 'approved' %}
+            <span class="badge bg-success">Approved</span>
+          {% elif r.status == 'rejected' %}
+            <span class="badge bg-danger">Rejected</span>
+          {% else %}
+            <span class="badge bg-warning">Pending</span>
+          {% endif %}
+        </td>
+        <td>{{ r.ts_utc[:10] }}</td>
+        <td>
+          {% if r.status == 'pending' %}
+          <form method="post" action="{{ url_for('admin_reg_approve') }}" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="id" value="{{ r.id }}">
+            <button class="btn btn-sm btn-success">Approve</button>
+          </form>
+          <form method="post" action="{{ url_for('admin_reg_reject') }}" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="id" value="{{ r.id }}">
+            <button class="btn btn-sm btn-warning">Reject</button>
+          </form>
+          {% endif %}
+          <form method="post" action="{{ url_for('admin_reg_delete') }}" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="id" value="{{ r.id }}">
+            <button class="btn btn-sm btn-danger" onclick="return confirm('Verwijderen?')">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

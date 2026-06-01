@@ -1,0 +1,97 @@
+{% extends "_base.html" %}
+{% block contents %}
+<div class="container mt-4">
+  <!-- Loading overlay -->
+  <div id="loading-overlay" class="position-fixed top-0 start-0 w-100 h-100 d-none"
+       style="background: rgba(0,0,0,.55); z-index: 1080;">
+    <div class="d-flex justify-content-center align-items-center h-100 text-center text-white p-4">
+      <div>
+        <div class="spinner-border mb-3" role="status" aria-label="Loading"></div>
+        <div class="fw-semibold">Just a moment… handling your request</div>
+        <div class="small- text-white-50">This can take up to a minute while we send emails.</div>
+      </div>
+    </div>
+  </div>
+
+  <h2 class="mb-3">Register for DXCluster posting access</h2>
+
+
+  <form id="register-form" method="post" action="{{ url_for('register_submit') }}" novalidate>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label for="callsign" class="form-label">Callsign *</label>
+        <input id="callsign" name="callsign" type="text" class="form-control" placeholder="e.g. YB3AQA"
+               required pattern="^[A-Za-z0-9/]{3,20}$" autocomplete="nickname">
+        <div class="form-text">Letters/numbers and optional "/" (3–20 chars)</div>
+      </div>
+      <div class="col-md-6">
+        <label for="firstname" class="form-label">First name *</label>
+        <input id="firstname" name="firstname" type="text" class="form-control" placeholder="Your first name"
+               required autocomplete="given-name">
+      </div>
+
+      <div class="col-md-6">
+        <label for="qth" class="form-label">QTH (City/Town) *</label>
+        <input id="qth" name="qth" type="text" class="form-control" placeholder="Your QTH"
+               required autocomplete="address-level2">
+      </div>
+      <div class="col-md-6">
+        <label for="locator" class="form-label">Maidenhead locator (4/6/8) *</label>
+        <input id="locator" name="locator" type="text" class="form-control" placeholder="e.g. JO22FB"
+               required pattern="^[A-Ra-r]{2}\d{2}([A-Xa-x]{2}(\d{2})?)?$" autocomplete="off" style="text-transform:uppercase">
+        <div class="form-text">Examples: JO22, JO22fb, JO22FB12</div>
+      </div>
+
+      <div class="col-12">
+        <label for="email" class="form-label">Email *</label>
+        <input id="email" name="email" type="email" class="form-control" placeholder="you@example.com"
+               required autocomplete="email">
+      </div>
+
+      <div class="col-md-6">
+        <label for="password" class="form-label">Password *</label>
+        <input id="password" name="password" type="password" class="form-control" 
+               required minlength="6" autocomplete="new-password">
+        <div class="form-text">Minimaal 6 karakters</div>
+      </div>
+      <div class="col-md-6">
+        <label for="password2" class="form-label">Bevestig password *</label>
+        <input id="password2" name="password2" type="password" class="form-control" 
+               required minlength="6" autocomplete="new-password">
+      </div>
+    </div>
+
+    <p class="text-muted text-center mt-3 mb-0">Fields marked with * are required.</p>
+
+    <div class="d-flex justify-content-end gap-2 mt-3">
+      <a class="btn btn-outline-secondary" href="{{ url_for('spots') }}">Cancel</a>
+      <button type="submit" id="submit-btn" class="btn btn-primary">Submit registration</button>
+    </div>
+  </form>
+</div>
+
+<!-- Page script (nonce voor jouw CSP) -->
+<script nonce="{{ inline_script_nonce }}">
+  (function () {
+    const form = document.getElementById('register-form');
+    const overlay = document.getElementById('loading-overlay');
+    const submitBtn = document.getElementById('submit-btn');
+    const callsign = document.getElementById('callsign');
+    const locator  = document.getElementById('locator');
+
+    function toUpperOnInput(e){ e.target.value = e.target.value.toUpperCase(); }
+    if (callsign) callsign.addEventListener('input', toUpperOnInput);
+    if (locator)  locator.addEventListener('input',  toUpperOnInput);
+
+    form.addEventListener('submit', function (ev) {
+      // laat browser-validatie zijn werk doen
+      if (!form.checkValidity()) return;
+      // disable & overlay
+      overlay.classList.remove('d-none');
+      submitBtn.setAttribute('disabled', 'disabled');
+    }, { passive: true });
+  })();
+</script>
+{% endblock contents %}

@@ -1,0 +1,9 @@
+{% extends "_base.html" %}
+{% block contents %}
+<div class="container mt-4">
+  <h2>Thanks {{ callsign }}!</h2>
+  <p>We received your registration and you will get an confirmation by mail.<br> 
+    After a while, you will get another mail to confirm that your registration was succesfull and you can then also post spots.</p>
+  <a class="btn btn-outline-secondary mt-3" href="{{ url_for('spots') }}">Back to start</a>
+</div>
+{% endblock contents %}
