@@ -32,14 +32,20 @@ class BaseDataProvider:
 
     # constructor: you have to pass logger, continent list and bands (for frequencies)
     # this method call the first refresh
-    def __init__(self, logger, qm, continents, bands):
+    def __init__(self, logger, qm, continents, bands, background_init=False):
         self.logger = logger
-        self.logger.info("Class: %s init start", self.__class__.__name__)
         self.qm = qm
         self.continents = continents
         self.bands = bands
-        self.refresh()
-        self.logger.info("Class: %s init end", self.__class__.__name__)
+        self.glb_data = {}
+        self.glb_last_refresh = 0
+        self.logger.info("Class: %s init start", self.__class__.__name__)
+        if background_init:
+            threading.Thread(target=self.refresh, daemon=True).start()
+            self.logger.info("Class: %s init deferred to background", self.__class__.__name__)
+        else:
+            self.refresh()
+            self.logger.info("Class: %s init end", self.__class__.__name__)
         return
 
 
@@ -186,7 +192,7 @@ class ContinentsBandsProvider(BaseDataProvider):
 class SpotsPerMounthProvider(BaseDataProvider):
     def __init__(self, logger, qm):
         # Calling constructor of base class
-        super().__init__(logger, qm, [], [])
+        super().__init__(logger, qm, [], [], background_init=True)
 
     def __load_data(self):
 
@@ -294,7 +300,7 @@ class SpotsPerMounthProvider(BaseDataProvider):
 class SpotsTrend(BaseDataProvider):
     def __init__(self, logger, qm):
         # Calling constructor of base class
-        super().__init__(logger, qm, [], [])
+        super().__init__(logger, qm, [], [], background_init=True)
 
     def __load_data(self):
 
