@@ -22,31 +22,31 @@
     <div class="row g-3">
       <div class="col-md-6">
         <label for="callsign" class="form-label">Callsign *</label>
-        <input id="callsign" name="callsign" type="text" class="form-control" placeholder="e.g. YB3AQA"
-               required pattern="^[A-Za-z0-9/]{3,20}$" autocomplete="nickname">
+        <input id="callsign" name="callsign" type="text" class="form-control"
+               required pattern="^[A-Za-z0-9/]{3,20}$" autocomplete="nickname" autofocus>
         <div class="form-text">Letters/numbers and optional "/" (3–20 chars)</div>
       </div>
       <div class="col-md-6">
         <label for="firstname" class="form-label">First name *</label>
-        <input id="firstname" name="firstname" type="text" class="form-control" placeholder="Your first name"
+        <input id="firstname" name="firstname" type="text" class="form-control"
                required autocomplete="given-name">
       </div>
 
       <div class="col-md-6">
         <label for="qth" class="form-label">QTH (City/Town) *</label>
-        <input id="qth" name="qth" type="text" class="form-control" placeholder="Your QTH"
+        <input id="qth" name="qth" type="text" class="form-control"
                required autocomplete="address-level2">
       </div>
       <div class="col-md-6">
         <label for="locator" class="form-label">Maidenhead locator (4/6/8) *</label>
-        <input id="locator" name="locator" type="text" class="form-control" placeholder="e.g. JO22FB"
+        <input id="locator" name="locator" type="text" class="form-control"
                required pattern="^[A-Ra-r]{2}\d{2}([A-Xa-x]{2}(\d{2})?)?$" autocomplete="off" style="text-transform:uppercase">
         <div class="form-text">Examples: JO22, JO22fb, JO22FB12</div>
       </div>
 
       <div class="col-12">
         <label for="email" class="form-label">Email *</label>
-        <input id="email" name="email" type="email" class="form-control" placeholder="you@example.com"
+        <input id="email" name="email" type="email" class="form-control"
                required autocomplete="email">
       </div>
 
