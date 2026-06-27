@@ -76,6 +76,7 @@ else:
 
 app.jinja_env.trim_blocks = True
 app.jinja_env.lstrip_blocks = True
+app.config["TEMPLATES_AUTO_RELOAD"] = True
 
 with open("cfg/bands.json") as json_bands:
     band_frequencies = json.load(json_bands)

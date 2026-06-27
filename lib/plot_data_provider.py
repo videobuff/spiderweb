@@ -330,9 +330,7 @@ class SpotsTrend(BaseDataProvider):
             # normalize data eliminating peaks
             df["day"] = pd.to_datetime(df["day"])
             df = df.set_index("day")
-            df = df.resample("D").interpolate(
-                method="pad", limit_direction="forward", axis=0
-            )
+            df = df.resample("D").ffill()
             df = df.rolling("30D").mean()
             df["total"] = df["total"].round(0)
 

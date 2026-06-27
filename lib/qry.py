@@ -72,7 +72,12 @@ class query_manager:
     def qry_pd(self, qs):
         try:
             cnx = self.__cnxpool.get_connection()
-            self.__data = pd.read_sql(qs, con=cnx)
+            cursor = cnx.cursor()
+            cursor.execute(qs)
+            self.__data = pd.DataFrame(
+                cursor.fetchall(), columns=[x[0] for x in cursor.description]
+            )
+            cursor.close()
         except Exception as e2:
             logging.error(e2)
         finally:
