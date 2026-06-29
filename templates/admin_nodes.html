@@ -1,0 +1,257 @@
+{% extends "_base.html" %}
+{% block title %}<title>Node beheer</title><meta http-equiv="refresh" content="30">{% endblock title %}
+{% block contents %}
+<div class="container my-4">
+  <h2 class="mb-1">Node beheer</h2>
+  <p class="text-muted mb-4">Outbound verbindingen van <strong>{{ node_callsign }}</strong> — op basis van crontab en connect scripts.</p>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="alert alert-{{ category }} alert-dismissible fade show">
+          {{ message | safe }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
+  <!-- Node table -->
+  <div class="card shadow-sm mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <span>
+        <strong>Connect scripts ({{ nodes | length }})</strong>
+        <span class="text-muted small ms-2">— refresh in <span id="refresh-countdown">30</span>s</span>
+      </span>
+      <a href="{{ url_for('admin_home') }}" class="btn btn-sm btn-outline-secondary">Terug naar admin</a>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-striped table-hover mb-0 align-middle">
+        <thead class="table-dark">
+          <tr>
+            <th>Script</th>
+            <th>Callsign</th>
+            <th>Host</th>
+            <th>Port</th>
+            <th>Cron</th>
+            <th>Status</th>
+            <th>Wachtwoord</th>
+            <th>Naam sysop</th>
+            <th>E-mail sysop</th>
+            <th>Acties</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for n in nodes %}
+          <tr class="{{ '' if n.in_cron else 'table-light text-muted' }}">
+            <td><code>{{ n.filename }}</code></td>
+            <td><strong>{{ n.callsign | upper }}</strong></td>
+            <td><small>{{ n.host }}</small></td>
+            <td>{{ n.port }}</td>
+            <td>
+              {% if n.in_cron %}
+                <span class="badge bg-primary">Actief</span>
+              {% else %}
+                <span class="badge bg-secondary">Niet in cron</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if n.connected %}
+                <span class="badge bg-success">Verbonden</span>
+              {% elif n.in_cron %}
+                <span class="badge bg-warning text-dark">Niet verbonden</span>
+              {% else %}
+                <span class="badge bg-light text-secondary border">—</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if n.password %}
+                <button type="button" class="btn btn-sm btn-outline-info"
+                        data-bs-toggle="modal" data-bs-target="#pwViewModal"
+                        data-callsign="{{ n.callsign | upper }}"
+                        data-pw="{{ n.password }}"
+                        data-node-callsign="{{ node_callsign }}"
+                        title="Toon wachtwoord" aria-label="Toon wachtwoord">
+                  <i class="bi bi-eye"></i>
+                </button>
+              {% else %}
+                <span class="text-muted small">Geen</span>
+              {% endif %}
+            </td>
+            <td>
+              <form method="post" action="{{ url_for('admin_nodes_update_meta') }}" class="d-flex gap-1 align-items-center">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="filename" value="{{ n.filename }}">
+                <input type="text" name="sysop_name" value="{{ n.sysop_name }}"
+                       class="form-control form-control-sm" placeholder="Naam" style="min-width:100px">
+            </td>
+            <td>
+              <div class="d-flex align-items-center gap-1">
+                <input type="text" name="sysop_email" value="{{ n.sysop_email }}"
+                       class="form-control form-control-sm" placeholder="email@..." style="min-width:140px">
+                <button type="submit" class="btn btn-sm btn-outline-secondary" title="Opslaan">&#10003;</button>
+              </div>
+              </form>
+            </td>
+            <td class="text-nowrap">
+              {% if n.in_cron %}
+              <form method="post" action="{{ url_for('admin_nodes_regen') }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="filename" value="{{ n.filename }}">
+                <button type="submit" class="btn btn-sm btn-outline-primary"
+                        onclick="return confirm('Nieuw wachtwoord genereren voor {{ n.callsign | upper }}?')"
+                        title="Nieuw wachtwoord" aria-label="Nieuw wachtwoord">
+                  <i class="bi bi-key"></i>
+                </button>
+              </form>
+              {% endif %}
+              <form method="post" action="{{ url_for('admin_nodes_delete') }}" class="d-inline ms-1">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="filename" value="{{ n.filename }}">
+                <button type="submit" class="btn btn-sm btn-outline-danger"
+                        onclick="return confirm('Connect script {{ n.filename }} verwijderen?')"
+                        title="Verwijder" aria-label="Verwijder">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="10" class="text-center text-muted py-3">Geen connect scripts gevonden</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Add node form -->
+  <div class="card shadow-sm">
+    <div class="card-header"><strong>Node toevoegen</strong></div>
+    <div class="card-body">
+      <form method="post" action="{{ url_for('admin_nodes_add') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="row g-3">
+          <div class="col-md-3">
+            <label class="form-label">Script naam <span class="text-danger">*</span></label>
+            <input type="text" name="filename" class="form-control" required
+                   pattern="[a-zA-Z0-9_\-]+" title="Alleen letters, cijfers, - en _">
+            <div class="form-text">Naam van het connect bestand</div>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">DX Callsign (remote) <span class="text-danger">*</span></label>
+            <input type="text" name="callsign" class="form-control" required>
+            <div class="form-text">DXSpider callsign van de remote node</div>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Host <span class="text-danger">*</span></label>
+            <input type="text" name="host" class="form-control" required>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label">Port <span class="text-danger">*</span></label>
+            <input type="number" name="port" class="form-control" min="1" max="65535" required>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Login (outbound)</label>
+            <input type="text" name="login" class="form-control">
+            <div class="form-text">Wat wij als login sturen (leeg = pa0esh-3)</div>
+          </div>
+          <div class="col-md-3 d-flex align-items-end pb-1">
+            <div class="form-check">
+              <input type="checkbox" name="use_password" value="yes" class="form-check-input" id="usePassword" checked>
+              <label class="form-check-label" for="usePassword">Wachtwoord automatisch genereren</label>
+            </div>
+          </div>
+          <div class="col-12">
+            <button type="submit" class="btn btn-primary">Node toevoegen</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Password view modal -->
+<div class="modal fade" id="pwViewModal" tabindex="-1" aria-labelledby="pwViewModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="pwViewModalLabel">Wachtwoord — <span id="pwViewCallsign"></span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small mb-1">Outbound wachtwoord (wat wij sturen naar remote):</p>
+        <pre class="bg-light p-2 rounded border" id="pwViewPw" style="font-size:1.1em;letter-spacing:.05em"></pre>
+        <hr>
+        <p class="text-muted small mb-1">Lokaal commando (reeds uitgevoerd op <strong id="pwViewNodeCs"></strong>):</p>
+        <pre class="bg-light p-2 rounded border" id="pwViewLocal"></pre>
+        <p class="text-muted small mb-1 mt-2">Remote sysop moet uitvoeren op hun node:</p>
+        <pre class="bg-success bg-opacity-10 p-2 rounded border border-success" id="pwViewRemote"></pre>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Sluiten</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if pw_modal %}
+<!-- New-password modal (auto-opens after add/regen) -->
+<div class="modal fade" id="newPwModal" tabindex="-1" aria-labelledby="newPwModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header bg-success text-white">
+        <h5 class="modal-title" id="newPwModalLabel">
+          Wachtwoord {{ pw_modal.action }} — {{ pw_modal.callsign }}
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small mb-1">Gegenereerd wachtwoord:</p>
+        <pre class="bg-light p-2 rounded border" style="font-size:1.15em;letter-spacing:.05em">{{ pw_modal.password }}</pre>
+        <hr>
+        <p class="text-muted small mb-1">Lokaal commando (reeds uitgevoerd op {{ pw_modal.node_callsign }}):</p>
+        <pre class="bg-light p-2 rounded border">set/password {{ pw_modal.callsign }} {{ pw_modal.password }}</pre>
+        <p class="text-muted small mb-1 mt-2">Stuur dit naar de remote sysop van <strong>{{ pw_modal.callsign }}</strong>:</p>
+        <pre class="bg-success bg-opacity-10 p-2 rounded border border-success">set/password {{ pw_modal.node_callsign }} {{ pw_modal.password }}</pre>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-success" data-bs-dismiss="modal">Begrepen</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<script nonce="{{ inline_script_nonce }}">
+document.addEventListener('DOMContentLoaded', function () {
+  // Populate password-view modal from button data attributes
+  var pwViewModal = document.getElementById('pwViewModal');
+  if (pwViewModal) {
+    pwViewModal.addEventListener('show.bs.modal', function (e) {
+      var btn = e.relatedTarget;
+      var cs  = btn.dataset.callsign;
+      var pw  = btn.dataset.pw;
+      var ncs = btn.dataset.nodeCallsign;
+      document.getElementById('pwViewCallsign').textContent = cs;
+      document.getElementById('pwViewNodeCs').textContent   = ncs;
+      document.getElementById('pwViewPw').textContent       = pw;
+      document.getElementById('pwViewLocal').textContent    = 'set/password ' + cs + ' ' + pw;
+      document.getElementById('pwViewRemote').textContent   = 'set/password ' + ncs + ' ' + pw;
+    });
+  }
+{% if pw_modal %}
+  // Auto-open new-password modal
+  var el = document.getElementById('newPwModal');
+  if (el) { new bootstrap.Modal(el).show(); }
+{% endif %}
+
+  // Countdown display (meta refresh does the actual reload)
+  var secs = 30;
+  var cdEl = document.getElementById('refresh-countdown');
+  setInterval(function() { if (cdEl && secs > 0) cdEl.textContent = --secs; }, 1000);
+});
+</script>
+
+{% endblock contents %}
