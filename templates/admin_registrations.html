@@ -5,7 +5,7 @@
 
   {% if dxspider_registered %}
   <div class="alert alert-info mb-3">
-    <strong>🔗 DXSpider geregistreerde calls:</strong> 
+    <strong>DXSpider geregistreerde calls:</strong>
     <span class="badge bg-primary ms-2">{{ dxspider_registered|length }}</span>
     <div class="mt-2">
       {% for call in dxspider_registered %}
@@ -26,10 +26,10 @@
     {% endif %}
   {% endwith %}
 
-  <table class="table table-striped">
-    <thead>
+  <table class="table table-striped table-bordered table-sm align-middle small">
+    <thead class="table-dark">
       <tr>
-        <th>Callsign</th>
+        <th style="min-width:110px">Callsign</th>
         <th>Naam</th>
         <th>Email</th>
         <th>QTH</th>
@@ -41,40 +41,54 @@
     </thead>
     <tbody>
       {% for r in regs %}
+      {# Empty out-of-band forms: keeps every <td> a direct, valid child of <tr>
+         (a <form> wrapping <td> elements is invalid HTML and was causing rows
+         to misrender). Inputs/buttons attach via the form="..." attribute. #}
+      <form id="editform-{{ r.id }}" method="post" action="{{ url_for('admin_reg_edit') }}"></form>
+      {% if r.status == 'pending' %}
+      <form id="approveform-{{ r.id }}" method="post" action="{{ url_for('admin_reg_approve') }}"></form>
+      <form id="rejectform-{{ r.id }}" method="post" action="{{ url_for('admin_reg_reject') }}"></form>
+      {% endif %}
+      <form id="deleteform-{{ r.id }}" method="post" action="{{ url_for('admin_reg_delete') }}"></form>
       <tr>
-        <td><strong>{{ r.callsign }}</strong></td>
-        <td>{{ r.firstname }}</td>
-        <td>{{ r.email }}</td>
-        <td>{{ r.qth }}</td>
-        <td>{{ r.locator }}</td>
-        <td>
+        <td class="text-nowrap">
+          <strong>{{ r.callsign }}</strong>
+          <input type="hidden" form="editform-{{ r.id }}" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" form="editform-{{ r.id }}" name="id" value="{{ r.id }}">
+          {% if r.status == 'pending' %}
+          <input type="hidden" form="approveform-{{ r.id }}" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" form="approveform-{{ r.id }}" name="id" value="{{ r.id }}">
+          <input type="hidden" form="rejectform-{{ r.id }}" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" form="rejectform-{{ r.id }}" name="id" value="{{ r.id }}">
+          {% endif %}
+          <input type="hidden" form="deleteform-{{ r.id }}" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" form="deleteform-{{ r.id }}" name="id" value="{{ r.id }}">
+        </td>
+        <td><input type="text" form="editform-{{ r.id }}" class="form-control form-control-sm" name="firstname" value="{{ r.firstname or '' }}"></td>
+        <td><input type="text" form="editform-{{ r.id }}" class="form-control form-control-sm" name="email" value="{{ r.email or '' }}"></td>
+        <td><input type="text" form="editform-{{ r.id }}" class="form-control form-control-sm" name="qth" value="{{ r.qth or '' }}"></td>
+        <td><input type="text" form="editform-{{ r.id }}" class="form-control form-control-sm" name="locator" value="{{ r.locator or '' }}" style="width:80px"></td>
+        <td class="text-nowrap">
           {% if r.status == 'approved' %}
             <span class="badge bg-success">Approved</span>
           {% elif r.status == 'rejected' %}
             <span class="badge bg-danger">Rejected</span>
           {% else %}
-            <span class="badge bg-warning">Pending</span>
+            <span class="badge bg-warning text-dark">Pending</span>
           {% endif %}
         </td>
-        <td>{{ r.ts_utc[:10] }}</td>
-        <td>
+        <td class="text-nowrap">{{ (r.ts_utc or '')[:10] }}</td>
+        <td class="text-nowrap">
+          <button type="submit" form="editform-{{ r.id }}" class="btn btn-sm btn-outline-primary" title="Opslaan" aria-label="Opslaan">
+            <i class="bi bi-save"></i>
+          </button>
           {% if r.status == 'pending' %}
-          <form method="post" action="{{ url_for('admin_reg_approve') }}" class="d-inline">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="hidden" name="id" value="{{ r.id }}">
-            <button class="btn btn-sm btn-success">Approve</button>
-          </form>
-          <form method="post" action="{{ url_for('admin_reg_reject') }}" class="d-inline">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="hidden" name="id" value="{{ r.id }}">
-            <button class="btn btn-sm btn-warning">Reject</button>
-          </form>
+          <button type="submit" form="approveform-{{ r.id }}" class="btn btn-sm btn-success">Approve</button>
+          <button type="submit" form="rejectform-{{ r.id }}" class="btn btn-sm btn-warning">Reject</button>
           {% endif %}
-          <form method="post" action="{{ url_for('admin_reg_delete') }}" class="d-inline">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="hidden" name="id" value="{{ r.id }}">
-            <button class="btn btn-sm btn-danger" onclick="return confirm('Verwijderen?')">Delete</button>
-          </form>
+          <button type="submit" form="deleteform-{{ r.id }}" class="btn btn-sm btn-outline-danger" title="Verwijderen" aria-label="Verwijderen" onclick="return confirm('Verwijderen?')">
+            <i class="bi bi-trash"></i>
+          </button>
         </td>
       </tr>
       {% endfor %}

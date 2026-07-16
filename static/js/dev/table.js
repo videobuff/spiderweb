@@ -164,7 +164,8 @@ class table_builder {
 		const td_comm = document.createElement('td');
 		td_comm.className = 'd-none d-lg-table-cell d-xl-table-cell';
 		try {
-			td_comm.textContent = line.comm.substring(0, 100);
+			const comm_clean = line.comm.replace(/<(ms|tr|es)>/gi, ' ').replace(/\s+/g, ' ').trim();
+			td_comm.textContent = comm_clean.substring(0, 100);
 		} catch (err) {
 			td_comm.textContent = '';
 		}

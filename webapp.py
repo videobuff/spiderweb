@@ -3,6 +3,7 @@ __author__ = "IU1BOW - Corrado"
 import os
 import json
 import secrets
+import string
 import threading
 import logging
 import logging.config
@@ -21,7 +22,7 @@ from flask_minify import minify
 import requests
 import xmltodict
 
-from lib.dxtelnet import fetch_who_and_version
+from lib.dxtelnet import fetch_who_and_version, run_sysop_command
 from lib.adxo import get_adxo_events
 from lib.qry import query_manager
 from lib.cty import prefix_table
@@ -317,6 +318,50 @@ def visitor_count():
 REG_FILE = "data/registrations.json"
 os.makedirs(os.path.dirname(REG_FILE), exist_ok=True)
 
+DXSPIDER_USERDB = "/spider/local_data/dxusers.db"
+
+def _load_dxspider_users(calls=None) -> dict:
+    """Return {CALLSIGN: parsed-data-dict} straight from DXSpider's SQLite user
+    database (ground truth - registrations.json/nodes_meta.json can go stale).
+    Pass `calls` to fetch just those callsigns; omit to fetch every user."""
+    import sqlite3
+    result = {}
+    try:
+        conn = sqlite3.connect(DXSPIDER_USERDB)
+        cur = conn.cursor()
+        if calls is not None:
+            calls = [c for c in calls if c]
+            if not calls:
+                return {}
+            placeholders = ",".join("?" for _ in calls)
+            cur.execute(f"SELECT call, data FROM users WHERE call IN ({placeholders})", calls)
+        else:
+            cur.execute("SELECT call, data FROM users")
+        for call, data in cur.fetchall():
+            try:
+                result[call.upper()] = json.loads(data)
+            except Exception:
+                continue
+        conn.close()
+    except Exception as e:
+        logging.error(f"_load_dxspider_users error: {e}")
+    return result
+
+def _get_dxspider_registered():
+    """Callsigns DXSpider considers registered (the 'registered' flag can be
+    stored as either the int 1 or the string "1", so compare as a string)."""
+    users = _load_dxspider_users()
+    return sorted(
+        call for call, data in users.items()
+        if str(data.get("registered", "")) == "1"
+    )
+
+def _get_dxuser_passwords(calls) -> dict:
+    """The real 'passwd' field per callsign, straight from DXSpider's user database
+    (ground truth for what we require of that node to log in to us)."""
+    users = _load_dxspider_users(calls)
+    return {call: data["passwd"] for call, data in users.items() if data.get("passwd")}
+
 CALLSIGN_RE   = re.compile(r"^[A-Za-z0-9/]{3,20}$")
 EMAIL_RE      = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 LOCATOR_RE    = re.compile(r"^[A-Ra-r]{2}\d{2}([A-Xa-x]{2}(\d{2})?)?$")
@@ -367,6 +412,135 @@ def _find_reg_by_callsign(regs, callsign_upper):
         if (r.get("callsign","").upper() == callsign_upper):
             return r
     return None
+
+# ----------------------------
+# Node management helpers
+# ----------------------------
+CONNECT_DIR = "/home/sysop/spider/connect"
+_CONNECT_FILENAME_RE = re.compile(r"^[a-zA-Z0-9_\-]+$")
+_HOST_RE = re.compile(r"^[A-Za-z0-9.\-]+$")
+
+def _parse_connect_script(filename):
+    if not _CONNECT_FILENAME_RE.match(filename):
+        return None
+    path = os.path.join(CONNECT_DIR, filename)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path) as f:
+            content = f.read()
+        data = {"filename": filename, "host": "", "port": "", "login": "", "callsign": "", "password": None}
+        m = re.search(r"connect\s+telnet\s+(\S+)\s+(\d+)", content)
+        if m:
+            data["host"] = m.group(1).rstrip(".")
+            data["port"] = m.group(2)
+        m = re.search(r"'[^']*[Ll]ogin[^']*'\s+'([^']+)'", content)
+        if m:
+            data["login"] = m.group(1)
+        m = re.search(r"'password:?'\s+'([^']+)'", content)
+        if m:
+            data["password"] = m.group(1)
+        m = re.search(r"^client\s+(\S+)", content, re.MULTILINE)
+        if m:
+            data["callsign"] = m.group(1)
+        return data
+    except Exception as e:
+        logger.error(f"_parse_connect_script {filename}: {e}")
+        return None
+
+def _write_connect_script(filename, host, port, login, callsign, password=None):
+    if not _CONNECT_FILENAME_RE.match(filename):
+        raise ValueError("Invalid connect script filename")
+    lines = [
+        "timeout 15",
+        "abort (Busy|Sorry|Fail)",
+        f"connect telnet {host} {port}",
+        f"'login' '{login}'",
+    ]
+    if password:
+        lines.append(f"'password:' '{password}'")
+    lines.append(f"client {callsign} telnet")
+    path = os.path.join(CONNECT_DIR, filename)
+    with open(path, "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+def _gen_node_password(length=16):
+    alphabet = string.ascii_letters + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+NODE_META_FILE = "data/nodes_meta.json"
+CRONTAB_FILE   = "/home/sysop/spider/local_cmd/crontab"
+
+def _load_node_meta() -> dict:
+    try:
+        with open(NODE_META_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _save_node_meta(meta: dict):
+    os.makedirs(os.path.dirname(NODE_META_FILE), exist_ok=True)
+    with open(NODE_META_FILE, "w") as f:
+        json.dump(meta, f, indent=2)
+
+def _parse_cron_nodes() -> set:
+    """Return lowercased set of script names referenced in start_connect() cron entries."""
+    try:
+        with open(CRONTAB_FILE) as f:
+            content = f.read()
+        return {m.group(1).lower() for m in re.finditer(r"start_connect\('([^']+)'\)", content)}
+    except Exception as e:
+        logger.error(f"_parse_cron_nodes: {e}")
+        return set()
+
+def _connected_callsigns() -> set:
+    """Return uppercased set of callsigns currently in the WHO cache."""
+    return {(e.get("callsign") or "").upper() for e in (whoj.get("data") or []) if e.get("callsign")}
+
+def _run_spider_cmd_sync(command: str) -> str:
+    host = cfg["telnet"]["telnet_host"]
+    port = cfg["telnet"]["telnet_port"]
+    user = cfg["telnet"]["telnet_user"]
+    password = cfg["telnet"].get("telnet_password") or ""
+    try:
+        result = asyncio.run(asyncio.wait_for(
+            run_sysop_command(host, port, user, password, command),
+            timeout=15
+        ))
+        return result or ""
+    except Exception as e:
+        logger.error(f"_run_spider_cmd_sync failed: {e}")
+        return ""
+
+def _issue_node_password(filename, host, port, login, callsign, action):
+    """Generate a node password, write it into the connect script, save it to
+    node_meta, and push it live into DXSpider. Flashes a warning instead of the
+    success modal if the DXSpider push fails, since the connect-script file and
+    DXSpider's actual password would otherwise silently diverge."""
+    password = _gen_node_password()
+    _write_connect_script(filename, host, port, login, callsign, password)
+
+    meta = _load_node_meta()
+    meta.setdefault(filename, {})
+    meta[filename]["password"] = password
+    meta[filename]["callsign"] = callsign
+    _save_node_meta(meta)
+
+    if not _run_spider_cmd_sync(f"set/password {callsign} {password}"):
+        flash(
+            f"Wachtwoord voor {callsign} lokaal opgeslagen, maar kon niet naar "
+            f"DXSpider gestuurd worden (telnet/set-password mislukt) - controleer "
+            f"de verbinding en zet het wachtwoord zo nodig handmatig.",
+            "warning",
+        )
+        return
+
+    flask.session["node_pw_modal"] = {
+        "callsign": callsign.upper(),
+        "password": password,
+        "node_callsign": _node_callsign(),
+        "action": action,
+    }
 
 # ----------------------------
 # ROUTES
@@ -721,11 +895,12 @@ def admin_regs():
     """Toon registraties - ZONDER trage DXSpider calls"""
     regs = _load_regs()
     regs.sort(key=lambda r: r.get("ts_utc",""), reverse=True)
-    
+
     return render_template(
         "admin_registrations.html",
         inline_script_nonce=get_nonce(),
         regs=regs,
+        dxspider_registered=_get_dxspider_registered(),
         visits=len(visits),
         menu_list=cfg["menu"]["menu_list"],
         mycallsign=cfg.get("mycallsign",""),
@@ -735,7 +910,7 @@ def admin_regs():
 
 @app.post("/admin/registrations/approve")
 def admin_reg_approve():
-    """Approve - stuurt alleen email, GEEN DXSpider calls"""
+    """Approve - stuurt email en registreert callsign in DXSpider (set/register)"""
     reg_id = (request.form.get("id") or "").strip()
     regs = _load_regs()
     r = _find_reg(regs, reg_id)
@@ -747,6 +922,12 @@ def admin_reg_approve():
     r["status"] = "approved"
     r["approved_at"] = datetime.datetime.utcnow().isoformat()
     _save_regs(regs)
+
+    # Registreer ook in DXSpider
+    if _run_spider_cmd_sync(f"set/register {r['callsign']}"):
+        logger.info(f"set/register {r['callsign']} sent to DXSpider")
+    else:
+        logger.error(f"DXSpider set/register failed for {r['callsign']}")
 
     # Email naar user
     _send_mail_async(
@@ -763,9 +944,44 @@ def admin_reg_approve():
         ),
         to_addr=r["email"]
     )
-    
+
     logger.info(f"Approved registration for {r['callsign']} - email sent")
     flash(f"{r['callsign']} goedgekeurd - email verzonden naar user", "success")
+    return redirect(url_for("admin_regs"))
+
+@app.post("/admin/registrations/edit")
+def admin_reg_edit():
+    reg_id = (request.form.get("id") or "").strip()
+    regs = _load_regs()
+    r = _find_reg(regs, reg_id)
+    if not r:
+        flash("Registratie niet gevonden", "danger")
+        return redirect(url_for("admin_regs"))
+
+    firstname = _clean(request.form.get("firstname"))
+    email     = _clean(request.form.get("email")).lower()
+    qth       = _clean(request.form.get("qth"))
+    locator   = _clean(request.form.get("locator")).upper()
+
+    errors = []
+    if not firstname:
+        errors.append("First name is required")
+    if not qth:
+        errors.append("QTH is required")
+    if not LOCATOR_RE.match(locator):
+        errors.append("Invalid QTH locator (must be 4/6/8 characters)")
+    if not EMAIL_RE.match(email):
+        errors.append("Invalid e-mail address")
+    if errors:
+        flash("; ".join(errors), "danger")
+        return redirect(url_for("admin_regs"))
+
+    r["firstname"] = firstname
+    r["email"]     = email
+    r["qth"]       = qth
+    r["locator"]   = locator
+    _save_regs(regs)
+    flash(f"{r['callsign']} opgeslagen", "success")
     return redirect(url_for("admin_regs"))
 
 @app.post("/admin/registrations/reject")
@@ -833,7 +1049,7 @@ def add_security_headers(resp):
         "object-src 'none';base-uri 'self';"
         "form-action 'self';"
         "connect-src 'self' cdn.jsdelivr.net cdnjs.cloudflare.com sidc.be prop.kc2g.com www.hamqsl.com;"
-        "font-src 'self' cdn.jsdelivr.net;"
+        "font-src 'self' cdn.jsdelivr.net cdnjs.cloudflare.com;"
         "frame-src 'self';"
         "frame-ancestors 'none';"
         "img-src 'self' data: cdnjs.cloudflare.com sidc.be prop.kc2g.com www.hamqsl.com;"
@@ -1002,6 +1218,123 @@ def backup_run():
         flash(f"Backup error: {e}", "danger")
 
     return redirect(url_for("backup_page"))
+
+def _node_callsign():
+    return cfg.get("node_callsign", cfg.get("mycallsign", "PA0ESH") + "-3").upper()
+
+@app.get("/admin/nodes")
+def admin_nodes():
+    meta       = _load_node_meta()
+    cron_nodes = _parse_cron_nodes()
+    connected  = _connected_callsigns()
+    nodes = []
+    if os.path.isdir(CONNECT_DIR):
+        for filename in sorted(os.listdir(CONNECT_DIR)):
+            node = _parse_connect_script(filename)
+            if node:
+                m = meta.get(filename, {})
+                node["sysop_name"]  = m.get("name", "")
+                node["sysop_email"] = m.get("email", "")
+                node["in_cron"]     = filename.lower() in cron_nodes
+                node["connected"]   = node["callsign"].upper() in connected
+                nodes.append(node)
+    # Wachtwoord dat wij van de andere kant vereisen (inbound) komt rechtstreeks uit
+    # de DXUser database, niet uit nodes_meta.json (die raakt snel verouderd/onvolledig).
+    db_pw = _get_dxuser_passwords([n["callsign"].upper() for n in nodes if n.get("callsign")])
+    for n in nodes:
+        n["required_pw"] = db_pw.get(n["callsign"].upper(), "") if n.get("callsign") else ""
+    pw_modal = flask.session.pop("node_pw_modal", None)
+    return render_template(
+        "admin_nodes.html",
+        inline_script_nonce=get_nonce(),
+        nodes=nodes,
+        node_callsign=_node_callsign(),
+        pw_modal=pw_modal,
+        visits=len(visits),
+        menu_list=cfg["menu"]["menu_list"],
+        mycallsign=cfg.get("mycallsign", ""),
+        mail=cfg.get("mail", ""),
+        telnet=f"{cfg['telnet']['telnet_host']}:{cfg['telnet']['telnet_port']}",
+        who_last_updated=whoj.get("last_updated", "No data"),
+    )
+
+@app.post("/admin/nodes/refresh")
+def admin_nodes_refresh():
+    who_is_connected()
+    flash("WHO-lijst ververst", "success")
+    return redirect(url_for("admin_nodes"))
+
+@app.post("/admin/nodes/add")
+def admin_nodes_add():
+    filename = (request.form.get("filename") or "").strip().lower()
+    host     = (request.form.get("host") or "").strip()
+    port     = (request.form.get("port") or "").strip()
+    login    = (request.form.get("login") or "").strip() or "pa0esh-3"
+    callsign = (request.form.get("callsign") or "").strip().upper()
+    use_pw   = request.form.get("use_password") == "yes"
+
+    if not filename or not _CONNECT_FILENAME_RE.match(filename):
+        flash("Ongeldige bestandsnaam (alleen letters, cijfers, - en _)", "danger")
+        return redirect(url_for("admin_nodes"))
+    if (not _HOST_RE.match(host) or not port.isdigit()
+            or not CALLSIGN_RE.match(callsign) or not CALLSIGN_RE.match(login)):
+        flash("Host, port, login en callsign moeten geldig zijn", "danger")
+        return redirect(url_for("admin_nodes"))
+    if os.path.exists(os.path.join(CONNECT_DIR, filename)):
+        flash(f"Script '{filename}' bestaat al", "danger")
+        return redirect(url_for("admin_nodes"))
+
+    if use_pw:
+        _issue_node_password(filename, host, port, login, callsign, "aangemaakt")
+    else:
+        _write_connect_script(filename, host, port, login, callsign)
+        flash(f"Node {callsign} aangemaakt (geen wachtwoord)", "success")
+    return redirect(url_for("admin_nodes"))
+
+@app.post("/admin/nodes/update_meta")
+def admin_nodes_update_meta():
+    filename = (request.form.get("filename") or "").strip()
+    if not filename or not _CONNECT_FILENAME_RE.match(filename):
+        flash("Ongeldige bestandsnaam", "danger")
+        return redirect(url_for("admin_nodes"))
+    name  = (request.form.get("sysop_name") or "").strip()
+    email = (request.form.get("sysop_email") or "").strip()
+    meta = _load_node_meta()
+    meta.setdefault(filename, {})
+    meta[filename]["name"]  = name
+    meta[filename]["email"] = email
+    _save_node_meta(meta)
+    flash(f"Gegevens voor '{filename}' opgeslagen", "success")
+    return redirect(url_for("admin_nodes"))
+
+@app.post("/admin/nodes/regen")
+def admin_nodes_regen():
+    filename = (request.form.get("filename") or "").strip()
+    node = _parse_connect_script(filename)
+    if not node:
+        flash("Connect script niet gevonden", "danger")
+        return redirect(url_for("admin_nodes"))
+
+    _issue_node_password(filename, node["host"], node["port"], node["login"], node["callsign"], "vernieuwd")
+    return redirect(url_for("admin_nodes"))
+
+@app.post("/admin/nodes/delete")
+def admin_nodes_delete():
+    filename = (request.form.get("filename") or "").strip()
+    node = _parse_connect_script(filename)
+    if not node:
+        flash("Connect script niet gevonden", "danger")
+        return redirect(url_for("admin_nodes"))
+    try:
+        os.remove(os.path.join(CONNECT_DIR, filename))
+        meta = _load_node_meta()
+        meta.pop(filename, None)
+        _save_node_meta(meta)
+        flash(f"Connect script '{filename}' verwijderd", "success")
+    except OSError as e:
+        flash(f"Verwijderen mislukt: {e}", "danger")
+    return redirect(url_for("admin_nodes"))
+
 
 if __name__ == "__main__":
     who_is_connected()

@@ -6,7 +6,7 @@
             "db":"dxcluster"
         },
         "timer":{
-                        "interval":30000
+                        "interval":10000
         },
 	"mycallsign":"PA0ESH",
     "mail":"info@pa0esh.nl",
@@ -14,8 +14,8 @@
     "telnet": {
         "host": "dxcluster.pa0esh.nl",
         "port": "7300",
-        "user": "pa0esh",
-        "password": ""
+        "user": "pa0esh-99",
+        "password": "<set in config.json, do not commit>"
     },
         "menu": {
           "menu_list": [
