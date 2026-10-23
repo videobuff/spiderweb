@@ -22,7 +22,8 @@ from flask_minify import minify
 import requests
 import xmltodict
 
-from lib.dxtelnet import fetch_who_and_version, run_sysop_command
+from lib.dxtelnet import fetch_who_and_version
+from lib.dxconsole import run_console_commands, NOT_ALLOWED_RE
 from lib.adxo import get_adxo_events
 from lib.qry import query_manager
 from lib.cty import prefix_table
@@ -497,20 +498,28 @@ def _connected_callsigns() -> set:
     """Return uppercased set of callsigns currently in the WHO cache."""
     return {(e.get("callsign") or "").upper() for e in (whoj.get("data") or []) if e.get("callsign")}
 
+# Sysop commands go via DXSpider's local console port, not via telnet: the telnet
+# user (PA0ESH-99) has priv 0, so every sysop command there answered "Not Allowed".
+# The console user must have priv 9 in DXSpider (set/privilege 9 <call>).
+CONSOLE_HOST = cfg.get("console", {}).get("host", "127.0.0.1")
+CONSOLE_PORT = cfg.get("console", {}).get("port", 27754)
+CONSOLE_CALL = cfg.get("console", {}).get("call") or (cfg.get("mycallsign", "PA0ESH") + "-98")
+
+def _run_spider_cmds_sync(commands):
+    """Run sysop commands on DXSpider; returns their outputs, or None if the
+    console login failed or any command was refused for lack of privilege."""
+    results = run_console_commands(CONSOLE_HOST, CONSOLE_PORT, CONSOLE_CALL, commands)
+    if results is None:
+        return None
+    for cmd, out in zip(commands, results):
+        if NOT_ALLOWED_RE.search(out):
+            logger.error(f"DXSpider refused '{cmd}' for {CONSOLE_CALL}: {out}")
+            return None
+    return results
+
 def _run_spider_cmd_sync(command: str) -> str:
-    host = cfg["telnet"]["telnet_host"]
-    port = cfg["telnet"]["telnet_port"]
-    user = cfg["telnet"]["telnet_user"]
-    password = cfg["telnet"].get("telnet_password") or ""
-    try:
-        result = asyncio.run(asyncio.wait_for(
-            run_sysop_command(host, port, user, password, command),
-            timeout=15
-        ))
-        return result or ""
-    except Exception as e:
-        logger.error(f"_run_spider_cmd_sync failed: {e}")
-        return ""
+    results = _run_spider_cmds_sync([command])
+    return results[0] if results else ""
 
 def _issue_node_password(filename, host, port, login, callsign, action):
     """Generate a node password, write it into the connect script, save it to
@@ -928,6 +937,8 @@ def admin_reg_approve():
         logger.info(f"set/register {r['callsign']} sent to DXSpider")
     else:
         logger.error(f"DXSpider set/register failed for {r['callsign']}")
+        flash(f"Let op: set/register {r['callsign']} in DXSpider is mislukt - "
+              f"registreer handmatig op de console.", "warning")
 
     # Email naar user
     _send_mail_async(
@@ -1342,6 +1353,235 @@ def admin_nodes_delete():
     except OSError as e:
         flash(f"Verwijderen mislukt: {e}", "danger")
     return redirect(url_for("admin_nodes"))
+
+# ----------------------------
+# Blocklist (bad IP's / bad calls)
+# ----------------------------
+# Only DXSpider's *.local files are ours: the EA3CV/dxspider.net lists (.new,
+# .global, .tor*) are re-downloaded every hour, and the hourly load/badspotter
+# rebuilds the badspotter hash from badspotter.new + badspotter.local, so a plain
+# set/badspotter would be gone within the hour.
+BADIP_LOCAL      = "/spider/local_data/badip.local"
+BADSPOTTER_LOCAL = "/spider/local_data/badspotter.local"
+BLOCKED_CALLS_FILE = "data/blocked_calls.json"
+BADCALL_RE = re.compile(r"^[A-Z0-9/]{3,15}(-\d{1,2})?$")
+LOCKOUT_CHUNK = 20  # calls per set/lockout command line
+
+def _read_list_file(path):
+    try:
+        with open(path) as f:
+            return [l.strip() for l in f if l.strip() and not l.lstrip().startswith("#")]
+    except FileNotFoundError:
+        return []
+
+def _write_list_file(path, items):
+    # Rewritten in place (not via rename) so DXSpider's owner/group/mode stay intact
+    with open(path, "w") as f:
+        f.write("".join(f"{i}\n" for i in items))
+
+def _load_blocked_calls() -> dict:
+    try:
+        with open(BLOCKED_CALLS_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _save_blocked_calls(data: dict):
+    os.makedirs(os.path.dirname(BLOCKED_CALLS_FILE), exist_ok=True)
+    with open(BLOCKED_CALLS_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+def _normalise_ip(s):
+    """Return the IP / CIDR in the canonical form DXSpider accepts, or None."""
+    import ipaddress
+    try:
+        if "/" in s:
+            return str(ipaddress.ip_network(s, strict=False))
+        return str(ipaddress.ip_address(s))
+    except ValueError:
+        return None
+
+def _lockout_calls(call):
+    """A base call is locked out together with -1..-99: DXSpider only falls back
+    to the base call's lockout flag for SSIDs that have no user record yet."""
+    if "-" in call:
+        return [call]
+    return [call] + [f"{call}-{i}" for i in range(1, 100)]
+
+def _run_lockout(cmd, call):
+    calls = _lockout_calls(call)
+    chunks = [calls[i:i + LOCKOUT_CHUNK] for i in range(0, len(calls), LOCKOUT_CHUNK)]
+    return _run_spider_cmds_sync([f"{cmd} {' '.join(c)}" for c in chunks]) is not None
+
+def _lockout_counts(calls) -> dict:
+    """{CALL: number of its lockout calls that DXSpider's user DB marks locked}.
+    DXSpider commits user changes every ~5s, so this can lag just after a change."""
+    import sqlite3
+    counts = {}
+    try:
+        conn = sqlite3.connect(f"file:{DXSPIDER_USERDB}?mode=ro", uri=True)
+        for call in calls:
+            wanted = _lockout_calls(call)
+            placeholders = ",".join("?" for _ in wanted)
+            rows = conn.execute(f"SELECT data FROM users WHERE call IN ({placeholders})", wanted)
+            counts[call] = sum(1 for (data,) in rows if str(json.loads(data).get("lockout")) == "1")
+        conn.close()
+    except Exception as e:
+        logger.error(f"_lockout_counts error: {e}")
+    return counts
+
+@app.get("/admin/blocklist")
+def admin_blocklist():
+    registry  = _load_blocked_calls()
+    spotters  = {c.upper() for c in _read_list_file(BADSPOTTER_LOCAL)}
+    all_calls = sorted(set(registry) | spotters)
+    locked    = _lockout_counts(all_calls)
+    calls = [{
+        "call":        c,
+        "all_ssids":   "-" not in c,
+        "lockout_n":   locked.get(c, 0),
+        "lockout_of":  len(_lockout_calls(c)),
+        "badspotter":  c in spotters,
+        "note":        registry.get(c, {}).get("note", ""),
+        "added":       registry.get(c, {}).get("added", ""),
+    } for c in all_calls]
+    return render_template(
+        "admin_blocklist.html",
+        inline_script_nonce=get_nonce(),
+        bad_ips=_read_list_file(BADIP_LOCAL),
+        calls=calls,
+        visits=len(visits),
+        menu_list=cfg["menu"]["menu_list"],
+        mycallsign=cfg.get("mycallsign", ""),
+        mail=cfg.get("mail", ""),
+        telnet=f"{cfg['telnet']['telnet_host']}:{cfg['telnet']['telnet_port']}",
+    )
+
+def _reload_badip(done_msg):
+    if _run_spider_cmd_sync("load/badip"):
+        flash(done_msg, "success")
+    else:
+        flash(f"{done_msg}, maar load/badip in DXSpider mislukte - wordt bij de "
+              f"volgende cron-run (elk uur op :32) alsnog geladen.", "warning")
+
+@app.post("/admin/blocklist/ip/add")
+def admin_blocklist_ip_add():
+    raw = re.split(r"[\s,;]+", request.form.get("ips") or "")
+    ips, bad = [], []
+    for s in filter(None, raw):
+        ip = _normalise_ip(s)
+        (ips if ip else bad).append(ip or s)
+    if bad:
+        flash(f"Geen geldig IP-adres, genegeerd: {', '.join(bad)}", "danger")
+    current = _read_list_file(BADIP_LOCAL)
+    new = [ip for ip in dict.fromkeys(ips) if ip not in current]
+    if not new:
+        if ips:
+            flash("Alle opgegeven IP's staan al in badip.local", "info")
+        return redirect(url_for("admin_blocklist"))
+    _write_list_file(BADIP_LOCAL, current + new)
+    logger.info(f"badip.local: added {new}")
+    _reload_badip(f"Toegevoegd aan badip.local: {', '.join(new)}")
+    return redirect(url_for("admin_blocklist"))
+
+@app.post("/admin/blocklist/ip/delete")
+def admin_blocklist_ip_delete():
+    ip = (request.form.get("ip") or "").strip()
+    current = _read_list_file(BADIP_LOCAL)
+    if ip not in current:
+        flash(f"{ip} staat niet in badip.local", "danger")
+        return redirect(url_for("admin_blocklist"))
+    _write_list_file(BADIP_LOCAL, [i for i in current if i != ip])
+    logger.info(f"badip.local: removed {ip}")
+    _reload_badip(f"{ip} verwijderd uit badip.local")
+    return redirect(url_for("admin_blocklist"))
+
+@app.post("/admin/blocklist/ip/check")
+def admin_blocklist_ip_check():
+    ip = _normalise_ip((request.form.get("ip") or "").strip())
+    if not ip or "/" in ip:
+        flash("Geef één geldig IP-adres op om te controleren", "danger")
+        return redirect(url_for("admin_blocklist"))
+    out = _run_spider_cmd_sync(f"show/badip {ip}")
+    if not out:
+        flash("show/badip in DXSpider mislukt", "danger")
+    elif "DIRTY" in out:
+        flash(f"{ip} wordt geblokkeerd (staat in een van de badip-lijsten)", "warning")
+    else:
+        flash(f"{ip} staat in geen enkele badip-lijst", "success")
+    return redirect(url_for("admin_blocklist"))
+
+@app.post("/admin/blocklist/call/add")
+def admin_blocklist_call_add():
+    call = (request.form.get("callsign") or "").strip().upper()
+    do_lockout    = request.form.get("lockout") == "yes"
+    do_badspotter = request.form.get("badspotter") == "yes"
+    note = (request.form.get("note") or "").strip()
+    if not BADCALL_RE.match(call):
+        flash("Ongeldige callsign (bijv. 2E0IHF of 2E0IHF-7)", "danger")
+        return redirect(url_for("admin_blocklist"))
+    if call.split("-")[0] == cfg.get("mycallsign", "").upper():
+        flash("Je eigen callsign blokkeren gaat niet", "danger")
+        return redirect(url_for("admin_blocklist"))
+    if not (do_lockout or do_badspotter):
+        flash("Kies minstens één van login blokkeren / spots blokkeren", "danger")
+        return redirect(url_for("admin_blocklist"))
+
+    msgs, problems = [], []
+    if do_lockout:
+        if _run_lockout("set/lockout", call):
+            msgs.append("login geblokkeerd" + (" (incl. -1 t/m -99)" if "-" not in call else ""))
+        else:
+            problems.append("set/lockout in DXSpider mislukt")
+    if do_badspotter:
+        current = _read_list_file(BADSPOTTER_LOCAL)
+        if call not in (c.upper() for c in current):
+            _write_list_file(BADSPOTTER_LOCAL, current + [call])
+        if _run_spider_cmd_sync("load/badspotter"):
+            msgs.append("spots/announces geblokkeerd")
+        else:
+            problems.append("load/badspotter mislukt (volgt bij de cron-run op :36)")
+
+    registry = _load_blocked_calls()
+    registry[call] = {"note": note or registry.get(call, {}).get("note", ""),
+                      "added": registry.get(call, {}).get("added")
+                               or datetime.datetime.now().strftime("%Y-%m-%d %H:%M")}
+    _save_blocked_calls(registry)
+    logger.info(f"blocklist: {call} lockout={do_lockout} badspotter={do_badspotter}")
+
+    if msgs:
+        flash(f"{call}: {', '.join(msgs)}", "success")
+    if problems:
+        flash(f"{call}: {'; '.join(problems)}", "warning")
+    return redirect(url_for("admin_blocklist"))
+
+@app.post("/admin/blocklist/call/delete")
+def admin_blocklist_call_delete():
+    call = (request.form.get("callsign") or "").strip().upper()
+    if not BADCALL_RE.match(call):
+        flash("Ongeldige callsign", "danger")
+        return redirect(url_for("admin_blocklist"))
+
+    problems = []
+    # unset/lockout answers "not found" for SSIDs without a user record - harmless
+    if not _run_lockout("unset/lockout", call):
+        problems.append("unset/lockout in DXSpider mislukt")
+    current = _read_list_file(BADSPOTTER_LOCAL)
+    if call in (c.upper() for c in current):
+        _write_list_file(BADSPOTTER_LOCAL, [c for c in current if c.upper() != call])
+        if not _run_spider_cmd_sync("load/badspotter"):
+            problems.append("load/badspotter mislukt (volgt bij de cron-run op :36)")
+
+    registry = _load_blocked_calls()
+    registry.pop(call, None)
+    _save_blocked_calls(registry)
+    logger.info(f"blocklist: {call} removed")
+
+    if problems:
+        flash(f"{call}: {'; '.join(problems)}", "warning")
+    else:
+        flash(f"{call} is niet meer geblokkeerd", "success")
+    return redirect(url_for("admin_blocklist"))
 
 
 if __name__ == "__main__":

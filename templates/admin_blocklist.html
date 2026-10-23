@@ -1,0 +1,164 @@
+{% extends "_base.html" %}
+{% block title %}<title>Blokkeren</title>{% endblock title %}
+{% block contents %}
+<style>
+  .block-table { font-size: 0.85rem; }
+  .block-table th, .block-table td { padding: .35rem .5rem; vertical-align: middle; }
+  .block-table .btn-sm { padding: .15rem .4rem; font-size: 0.78rem; }
+</style>
+<div class="container my-4">
+  <div class="d-flex justify-content-between align-items-center mb-1">
+    <h2 class="mb-0">Blokkeren</h2>
+    <a href="{{ url_for('admin_home') }}" class="btn btn-sm btn-outline-secondary">Terug naar admin</a>
+  </div>
+  <p class="text-muted mb-4">Eigen bad IP's en bad calls van deze node. De lijsten van EA3CV / dxspider.net worden elk uur apart bijgewerkt en staan hier niet tussen.</p>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="alert alert-{{ category }} alert-dismissible fade show">
+          {{ message }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
+  <!-- Bad calls -->
+  <div class="card shadow-sm mb-4">
+    <div class="card-header"><strong>Bad calls ({{ calls | length }})</strong></div>
+    <div class="card-body">
+      <form method="post" action="{{ url_for('admin_blocklist_call_add') }}" class="row g-2 align-items-end mb-2">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="col-sm-3">
+          <label class="form-label small mb-1" for="callsign">Callsign</label>
+          <input type="text" class="form-control form-control-sm" id="callsign" name="callsign" placeholder="2E0IHF" required>
+        </div>
+        <div class="col-sm-4">
+          <label class="form-label small mb-1" for="note">Notitie</label>
+          <input type="text" class="form-control form-control-sm" id="note" name="note" placeholder="bijv. spamt PC92, zie mail EA3CV">
+        </div>
+        <div class="col-sm-3">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="lockout" value="yes" id="lockout" checked>
+            <label class="form-check-label small" for="lockout">Login blokkeren (lockout)</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="badspotter" value="yes" id="badspotter" checked>
+            <label class="form-check-label small" for="badspotter">Spots/announces blokkeren</label>
+          </div>
+        </div>
+        <div class="col-sm-2">
+          <button type="submit" class="btn btn-sm btn-danger w-100">Blokkeer</button>
+        </div>
+      </form>
+      <p class="text-muted small mb-0">
+        Zonder SSID (<code>2E0IHF</code>) geldt het voor de call én alle SSID's -1 t/m -99; met SSID (<code>2E0IHF-7</code>) alleen voor die ene.
+        Routeringsverkeer (PC92) van andere nodes kan DXSpider niet per call tegenhouden.
+      </p>
+    </div>
+    {% if calls %}
+    <div class="table-responsive block-table">
+      <table class="table table-sm table-striped table-hover mb-0 align-middle">
+        <thead class="table-dark">
+          <tr><th>Callsign</th><th>Login</th><th>Spots</th><th>Notitie</th><th>Toegevoegd</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for c in calls %}
+          <tr>
+            <td><strong>{{ c.call }}</strong>{% if c.all_ssids %} <span class="text-muted small">+ -1..-99</span>{% endif %}</td>
+            <td>
+              {% if c.lockout_n == c.lockout_of %}
+                <span class="badge bg-danger">Geblokkeerd</span>
+              {% elif c.lockout_n %}
+                <span class="badge bg-warning text-dark" title="Telt mee wat DXSpider al naar zijn database heeft weggeschreven (kan ~5s achterlopen)">{{ c.lockout_n }}/{{ c.lockout_of }}</span>
+              {% else %}
+                <span class="badge bg-light text-secondary border">Nee</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if c.badspotter %}
+                <span class="badge bg-danger">Geblokkeerd</span>
+              {% else %}
+                <span class="badge bg-light text-secondary border">Nee</span>
+              {% endif %}
+            </td>
+            <td class="small">{{ c.note }}</td>
+            <td class="small text-muted">{{ c.added }}</td>
+            <td class="text-end">
+              <form method="post" action="{{ url_for('admin_blocklist_call_delete') }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="callsign" value="{{ c.call }}">
+                <button type="submit" class="btn btn-sm btn-outline-secondary js-confirm"
+                        data-confirm="Blokkade van {{ c.call }} opheffen?">Vrijgeven</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Bad IP's -->
+  <div class="card shadow-sm mb-4">
+    <div class="card-header"><strong>Bad IP's — badip.local ({{ bad_ips | length }})</strong></div>
+    <div class="card-body">
+      <form method="post" action="{{ url_for('admin_blocklist_ip_add') }}" class="row g-2 align-items-end mb-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="col-sm-10">
+          <label class="form-label small mb-1" for="ips">IP-adres(sen), gescheiden door spatie, komma of nieuwe regel</label>
+          <textarea class="form-control form-control-sm" id="ips" name="ips" rows="2" placeholder="2.28.205.166 81.141.156.164" required></textarea>
+        </div>
+        <div class="col-sm-2">
+          <button type="submit" class="btn btn-sm btn-danger w-100">Toevoegen</button>
+        </div>
+      </form>
+      <form method="post" action="{{ url_for('admin_blocklist_ip_check') }}" class="row g-2 align-items-end">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="col-sm-4">
+          <label class="form-label small mb-1" for="checkip">IP controleren tegen alle badip-lijsten</label>
+          <input type="text" class="form-control form-control-sm" id="checkip" name="ip" placeholder="1.2.3.4" required>
+        </div>
+        <div class="col-sm-2">
+          <button type="submit" class="btn btn-sm btn-outline-primary w-100">Controleer</button>
+        </div>
+      </form>
+      <p class="text-muted small mt-2 mb-0">
+        Let op: door een bug in DXSpider blokkeert een range als <code>1.2.3.0/24</code> nu alleen <code>1.2.3.0</code> zelf — voeg losse IP's toe.
+      </p>
+    </div>
+    {% if bad_ips %}
+    <div class="table-responsive block-table">
+      <table class="table table-sm table-striped table-hover mb-0 align-middle">
+        <thead class="table-dark"><tr><th>IP</th><th></th></tr></thead>
+        <tbody>
+          {% for ip in bad_ips %}
+          <tr>
+            <td><code>{{ ip }}</code></td>
+            <td class="text-end">
+              <form method="post" action="{{ url_for('admin_blocklist_ip_delete') }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="ip" value="{{ ip }}">
+                <button type="submit" class="btn btn-sm btn-outline-secondary js-confirm"
+                        data-confirm="{{ ip }} uit badip.local verwijderen?">Verwijder</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<script nonce="{{ inline_script_nonce }}">
+  document.querySelectorAll(".js-confirm").forEach(function (btn) {
+    btn.addEventListener("click", function (e) {
+      if (!confirm(btn.dataset.confirm)) e.preventDefault();
+    });
+  });
+</script>
+{% endblock contents %}
