@@ -1038,9 +1038,17 @@ def add_security_headers(resp):
     resp.headers["X-Frame-Options"] = "SAMEORIGIN"
     resp.headers["X-Content-Type-Options"] = "nosniff"
     resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    resp.headers["Cache-Control"] = "public, no-cache, must-revalidate, max-age=900"
-    resp.headers["Pragma"] = "no-cache"
-    resp.headers["ETag"] = app.config["VERSION"]
+    if request.path.startswith("/admin"):
+        # Admin pages show live/dynamic state (node status, WHO list, ...).
+        # A static ETag (=app version) here made browsers keep serving stale
+        # cached pages after the underlying data changed - never cache these.
+        resp.headers["Cache-Control"] = "no-store"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers.pop("ETag", None)
+    else:
+        resp.headers["Cache-Control"] = "public, no-cache, must-revalidate, max-age=900"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["ETag"] = app.config["VERSION"]
 
     resp.headers["Content-Security-Policy"] = (
         "default-src 'self';"
