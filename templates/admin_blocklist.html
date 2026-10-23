@@ -101,6 +101,74 @@
     {% endif %}
   </div>
 
+  <!-- Lockouts not set via this page -->
+  <div class="card shadow-sm mb-4">
+    <div class="card-header"><strong>Overige lockouts</strong> <span class="text-muted small ms-2">buiten deze pagina gezet — "Vrijgeven" geldt alleen voor die ene call</span></div>
+    <div class="card-body pb-2">
+      <h6 class="mb-2">Gebruikers ({{ other_users | length }})</h6>
+      {% if other_users %}
+      <div class="table-responsive block-table mb-3">
+        <table class="table table-sm table-striped table-hover mb-0 align-middle">
+          <thead class="table-dark"><tr><th>Callsign</th><th>Laatst ingelogd</th><th>Geweigerd deze maand</th><th></th></tr></thead>
+          <tbody>
+            {% for r in other_users %}
+            <tr>
+              <td><strong>{{ r.call }}</strong></td>
+              <td class="small text-muted">{{ r.lastin }}</td>
+              <td class="small">{% if r.refused %}{{ r.refused }}x <span class="text-muted">(laatst {{ r.refused_last }})</span>{% endif %}</td>
+              <td class="text-end">
+                <form method="post" action="{{ url_for('admin_blocklist_lockout_delete') }}" class="d-inline">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="callsign" value="{{ r.call }}">
+                  <button type="submit" class="btn btn-sm btn-outline-secondary js-confirm"
+                          data-confirm="Lockout van {{ r.call }} opheffen? Deze gebruiker kan dan weer inloggen.">Vrijgeven</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="text-muted small">Geen.</p>
+      {% endif %}
+
+      <details>
+        <summary class="mb-2"><strong>Nodes ({{ other_nodes | length }})</strong>
+          {% set tried = other_nodes | selectattr("refused") | list %}
+          {% if tried %}<span class="badge bg-warning text-dark ms-1">{{ tried | length }} probeerden deze maand in te loggen</span>{% endif %}
+        </summary>
+        <p class="text-muted small">
+          DXSpider zet elke node die het via het netwerk (PC92) leert kennen automatisch op lockout, zodat niemand zich als die node kan voordoen.
+          Vrijgeven betekent dat die node bij ons mag inloggen (peeren). Nodes die het deze maand probeerden staan bovenaan.
+        </p>
+        <input type="search" class="form-control form-control-sm mb-2" id="nodeFilter" placeholder="Zoek node, bijv. IW1QLH">
+        <div class="table-responsive block-table" style="max-height: 28rem; overflow-y: auto;">
+          <table class="table table-sm table-striped table-hover mb-0 align-middle" id="nodeTable">
+            <thead class="table-dark" style="position: sticky; top: 0;"><tr><th>Node</th><th>Laatst gezien</th><th>Geweigerd deze maand</th><th></th></tr></thead>
+            <tbody>
+              {% for r in other_nodes %}
+              <tr data-call="{{ r.call }}" class="{{ 'table-warning' if r.refused else '' }}">
+                <td><strong>{{ r.call }}</strong></td>
+                <td class="small text-muted">{{ r.lastin }}</td>
+                <td class="small">{% if r.refused %}{{ r.refused }}x <span class="text-muted">(laatst {{ r.refused_last }})</span>{% endif %}</td>
+                <td class="text-end">
+                  <form method="post" action="{{ url_for('admin_blocklist_lockout_delete') }}" class="d-inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="callsign" value="{{ r.call }}">
+                    <button type="submit" class="btn btn-sm btn-outline-secondary js-confirm"
+                            data-confirm="Lockout van node {{ r.call }} opheffen? Die node mag dan bij ons inloggen.">Vrijgeven</button>
+                  </form>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </div>
+  </div>
+
   <!-- Bad IP's -->
   <div class="card shadow-sm mb-4">
     <div class="card-header"><strong>Bad IP's — badip.local ({{ bad_ips | length }})</strong></div>
@@ -160,5 +228,14 @@
       if (!confirm(btn.dataset.confirm)) e.preventDefault();
     });
   });
+  var nodeFilter = document.getElementById("nodeFilter");
+  if (nodeFilter) {
+    nodeFilter.addEventListener("input", function () {
+      var q = nodeFilter.value.trim().toUpperCase();
+      document.querySelectorAll("#nodeTable tbody tr").forEach(function (tr) {
+        tr.style.display = tr.dataset.call.indexOf(q) === -1 ? "none" : "";
+      });
+    });
+  }
 </script>
 {% endblock contents %}

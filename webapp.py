@@ -1430,12 +1430,74 @@ def _lockout_counts(calls) -> dict:
         logger.error(f"_lockout_counts error: {e}")
     return counts
 
+def _all_lockouts():
+    """Every locked-out call in DXSpider's user DB: [{call, sort, lastin}]."""
+    import sqlite3
+    result = []
+    try:
+        conn = sqlite3.connect(f"file:{DXSPIDER_USERDB}?mode=ro", uri=True)
+        rows = conn.execute("""SELECT call, data FROM users
+                               WHERE data LIKE '%"lockout":1%' OR data LIKE '%"lockout":"1"%'""")
+        for call, data in rows:
+            d = json.loads(data)
+            if str(d.get("lockout")) == "1":
+                result.append({"call": call.upper(), "sort": d.get("sort") or "U",
+                               "lastin": float(d.get("lastin") or 0)})
+        conn.close()
+    except Exception as e:
+        logger.error(f"_all_lockouts error: {e}")
+    return result
+
+_refused_cache = {"t": 0, "data": {}}
+_REFUSED_RE = re.compile(r"^(\d+)\^[^^]*\^(\S+) on \S+ is locked out")
+
+def _refused_logins():
+    """{CALL: (count, last_epoch)} of logins DXSpider refused for lockout this
+    month, from its monthly log (~150MB, so cached for 10 minutes)."""
+    now = datetime.datetime.now()
+    if now.timestamp() - _refused_cache["t"] < 600:
+        return _refused_cache["data"]
+    data = {}
+    try:
+        with open(now.strftime("/spider/local_data/log/%Y/%m.dat"), errors="replace") as f:
+            for line in f:
+                if "is locked out" not in line:
+                    continue
+                m = _REFUSED_RE.match(line)
+                if m:
+                    n, _ = data.get(m.group(2).upper(), (0, 0))
+                    data[m.group(2).upper()] = (n + 1, int(m.group(1)))
+    except OSError as e:
+        logger.error(f"_refused_logins error: {e}")
+    _refused_cache.update(t=now.timestamp(), data=data)
+    return data
+
+def _fmt_epoch(t):
+    return datetime.datetime.fromtimestamp(t).strftime("%Y-%m-%d %H:%M") if t else ""
+
 @app.get("/admin/blocklist")
 def admin_blocklist():
     registry  = _load_blocked_calls()
     spotters  = {c.upper() for c in _read_list_file(BADSPOTTER_LOCAL)}
     all_calls = sorted(set(registry) | spotters)
     locked    = _lockout_counts(all_calls)
+
+    # Lockouts not managed by this page. DXSpider itself locks out every node it
+    # learns about via PC92 (so nobody can log in pretending to be that node),
+    # which is why nodes are listed apart from user lockouts.
+    covered = {x for c in all_calls for x in _lockout_calls(c)}
+    refused = _refused_logins()
+    other_users, other_nodes = [], []
+    for l in _all_lockouts():
+        if l["call"] in covered:
+            continue
+        n, last = refused.get(l["call"], (0, 0))
+        row = {"call": l["call"], "lastin": _fmt_epoch(l["lastin"]), "refused": n,
+               "refused_last": _fmt_epoch(last), "_lastin": l["lastin"]}
+        (other_nodes if re.fullmatch(r"[ACRSXL]", l["sort"]) else other_users).append(row)  # = DXUser::is_node
+    sort_key = lambda r: (-r["refused"], -r["_lastin"])
+    other_users.sort(key=sort_key)
+    other_nodes.sort(key=sort_key)
     calls = [{
         "call":        c,
         "all_ssids":   "-" not in c,
@@ -1450,6 +1512,8 @@ def admin_blocklist():
         inline_script_nonce=get_nonce(),
         bad_ips=_read_list_file(BADIP_LOCAL),
         calls=calls,
+        other_users=other_users,
+        other_nodes=other_nodes,
         visits=len(visits),
         menu_list=cfg["menu"]["menu_list"],
         mycallsign=cfg.get("mycallsign", ""),
@@ -1553,6 +1617,22 @@ def admin_blocklist_call_add():
         flash(f"{call}: {', '.join(msgs)}", "success")
     if problems:
         flash(f"{call}: {'; '.join(problems)}", "warning")
+    return redirect(url_for("admin_blocklist"))
+
+@app.post("/admin/blocklist/lockout/delete")
+def admin_blocklist_lockout_delete():
+    """Release exactly one call (no SSID expansion) - for lockouts set outside
+    this page, including DXSpider's automatic node lockouts."""
+    call = (request.form.get("callsign") or "").strip().upper()
+    if not BADCALL_RE.match(call):
+        flash("Ongeldige callsign", "danger")
+        return redirect(url_for("admin_blocklist"))
+    out = _run_spider_cmd_sync(f"unset/lockout {call}")
+    if "Unlocked" in out:
+        logger.info(f"blocklist: lockout of {call} released")
+        flash(f"Lockout van {call} opgeheven", "success")
+    else:
+        flash(f"unset/lockout {call} mislukt: {out or 'geen antwoord van DXSpider'}", "danger")
     return redirect(url_for("admin_blocklist"))
 
 @app.post("/admin/blocklist/call/delete")
