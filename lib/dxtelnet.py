@@ -34,37 +34,32 @@ async def _telnet_login(host, port, user, password=None):
     return reader, writer
 
 
+def decode_telnet(data):
+    """Accept UTF-8 and legacy single-byte names in DXSpider output."""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("latin-1")
+
+
 def parse_who(lines):
-    lines = lines.splitlines()
-    logging.debug(f"Response to 'who': {lines}")
+    # Split fixed-width fields before decoding: names may contain multibyte text.
+    if isinstance(lines, str):
+        lines = lines.encode("utf-8")
     row_headers = ("callsign", "type", "state", "started", "name", "average_rtt", "link")
     payload = []
-
-    filler =  " " * 50
-    # Skip the first line (header) and the last line (prompt)
-    for i in range(1, len(lines) - 1):
-        line = lines[i].lstrip()
-        
-        # Skip the header line if it exists
-        if line.startswith("Callsign"):
-            continue  # Skip this line
-
-        logging.debug(f"line ({i}): {line}")
-        line_parts = line.split(" ", 1)
-        first_part = line_parts[0]
-        second_part = line_parts[1]
-        ln = len(second_part)
-
-        try:
-            if ln > 32:
-                fields = [first_part]
-                second_part += filler
-                fieldstruct = struct.Struct("10s 8s 18s 11s 2x 5s")
-                fields += list(fieldstruct.unpack_from(second_part.encode()))
-                fields = [f.decode('utf-8').strip() if isinstance(f, bytes) else f.strip() for f in fields]  
-                payload.append(dict(zip(row_headers, fields)))
-        except Exception as e1:
-            logging.error(e1)
+    for line in lines.splitlines():
+        parts = line.lstrip().split(b" ", 1)
+        if len(parts) != 2 or parts[0] == b"Callsign":
+            continue
+        call, rest = parts
+        if len(rest) <= 32:
+            continue
+        fields = [decode_telnet(call)]
+        rest += b" " * 50
+        fields += [decode_telnet(field).strip() for field in
+                   struct.Struct("10s 8s 18s 11s 2x 5s").unpack_from(rest)]
+        payload.append(dict(zip(row_headers, fields)))
     return payload
 
 async def fetch_who_and_version(host, port, user, password=None):
@@ -79,11 +74,11 @@ async def fetch_who_and_version(host, port, user, password=None):
 
         writer.write(b'who\n')
         who_response = await asyncio.wait_for(reader.readuntil(WAIT_FOR), timeout=PROMPT_TIMEOUT)
-        who_data = who_response.decode('utf-8')
+        who_data = who_response
 
         writer.write(b'sh/version\n')
         version_response = await asyncio.wait_for(reader.readuntil(WAIT_FOR), timeout=PROMPT_TIMEOUT)
-        res = version_response.decode('utf-8').strip().splitlines()
+        res = decode_telnet(version_response).strip().splitlines()
         logging.debug(f"Full SH/VERSION Response:\n{res}")
 
         for line in res:
@@ -98,11 +93,13 @@ async def fetch_who_and_version(host, port, user, password=None):
 
     except asyncio.TimeoutError:
         logging.error("Timeout during WHO/version telnet session")
-        return [], "Login timeout"
+        raise
     except EOFError:
         logging.error("End of buffer reached unexpectedly")
+        raise
     except Exception as e:
         logging.error(f"Error retrieving WHO and version info: {e}")
+        raise
     finally:
         if writer:
             writer.close()
@@ -110,7 +107,10 @@ async def fetch_who_and_version(host, port, user, password=None):
             reader.feed_eof()
         logging.debug("Connection closed")
 
-    return parse_who(who_data), version_info
+    parsed = parse_who(who_data)
+    if not parsed:
+        raise ValueError("WHO response contains no valid rows")
+    return parsed, version_info
 
 
 async def run_sysop_command(host, port, user, password, command):

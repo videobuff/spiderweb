@@ -264,7 +264,9 @@ def who_is_connected():
         result = asyncio.run(asyncio.wait_for(
             fetch_who_and_version(host, port, user, password), timeout=12
         ))
-        parsed_data, dxspider_version = result or ([], "Unknown")
+        if not result or not result[0]:
+            raise ValueError("WHO response contains no valid rows")
+        parsed_data, dxspider_version = result
 
         u = (user or "").upper()
         safe_data = [e for e in (parsed_data or []) if (e.get("callsign","").upper() != u)]
